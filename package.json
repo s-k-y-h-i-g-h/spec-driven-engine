@@ -1,0 +1,23 @@
+{
+  "name": "spec-driven-engine",
+  "version": "0.1.0",
+  "description": "Spec-driven development engine for Hermes - watches specs and implements them iteratively",
+  "main": "scripts/index.js",
+  "type": "module",
+  "bin": {
+    "spec-driven-engine": "./scripts/index.js"
+  },
+  "scripts": {
+    "start": "node scripts/index.js start",
+    "test": "node --test tests/*.test.js"
+  },
+  "dependencies": {
+    "chokidar": "^3.6.0",
+    "gray-matter": "^4.0.3",
+    "js-yaml": "^4.1.0",
+    "commander": "^11.1.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0"
+  }
+}
