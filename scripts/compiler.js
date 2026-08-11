@@ -21,6 +21,9 @@ export class SpecCompiler {
     // Parse requirements from markdown
     const requirements = this.parseRequirements(markdownContent);
 
+    // Build execution plan DAG from requirements
+    const tasks = this.buildExecutionPlan(requirements);
+
     // Parse quality gates from frontmatter
     const qualityGates = frontmatter.quality_gate || frontmatter.quality_gates || {};
 
@@ -31,16 +34,18 @@ export class SpecCompiler {
     const plan = {
       specPath,
       project: frontmatter.project || path.basename(specPath, '.md'),
+      projectDir: frontmatter.project_dir ? path.resolve(path.dirname(specPath), frontmatter.project_dir) : null,
       version: frontmatter.version || '1.0.0',
       specVersion: frontmatter.spec_version || '1.0',
       requirements,
+      tasks,
       qualityGates,
       deployment,
       qualityGatesConfig: this.config.quality_gates || {},
       createdAt: new Date().toISOString()
     };
 
-    logger.info(`Compiled spec: ${plan.project} (${requirements.length} requirements)`);
+    logger.info(`Compiled spec: ${plan.project} (${requirements.length} requirements, ${tasks.length} tasks)`);
     return plan;
   }
 
@@ -105,9 +110,17 @@ export class SpecCompiler {
           case 'priority':
             currentReq.priority = value.trim().toLowerCase();
             break;
-          case 'dependencies':
-            currentReq.dependencies = value.split(',').map(d => d.trim());
+          case 'dependencies': {
+              let depsStr = value.trim();
+              // Strip surrounding brackets: "[REQ-001, REQ-002]" -> "REQ-001, REQ-002"
+              depsStr = depsStr.replace(/^\[|\]$/g, '').trim();
+              if (depsStr === '' || depsStr === '[]') {
+                currentReq.dependencies = [];
+              } else {
+                currentReq.dependencies = depsStr.split(',').map(d => d.trim()).filter(Boolean);
+              }
             break;
+          }
         }
       }
     }
@@ -126,8 +139,26 @@ export class SpecCompiler {
     // Sort by dependencies (topological sort)
     const sorted = this.topologicalSort(requirements);
     
-    return {
-      tasks: sorted.map(req => ({
+    // Assign phases, stories, and parallel markers based on spec-kit conventions
+    const tasksWithMeta = sorted.map((req, index) => {
+      // Determine phase based on position and dependencies
+      let phase = 'user-story';
+      if (index < 2) phase = 'setup';
+      else if (index < 5) phase = 'foundational';
+      
+      // Assign story based on priority (high = US1, medium = US2, low = US3)
+      let story = 'US1';
+      if (req.priority === 'high') story = 'US1';
+      else if (req.priority === 'medium') story = 'US2';
+      else story = 'US3';
+      
+      // Mark as parallel if no dependencies and not in foundational phase
+      const parallel = req.dependencies.length === 0 && phase !== 'foundational';
+      
+      // Assign priority based on requirement priority
+      const priority = req.priority || 'medium';
+      
+      return {
         id: req.id,
         title: req.title,
         description: req.description,
@@ -135,9 +166,17 @@ export class SpecCompiler {
         priority: req.priority,
         dependencies: req.dependencies,
         status: 'pending',
-        attempts: 0
-      }))
-    };
+        attempts: 0,
+        // Spec-kit metadata
+        phase,
+        story: `US${req.priority === 'high' ? '1' : req.priority === 'medium' ? '2' : '3'}`,
+        parallel,
+        priority: req.priority || 'medium',
+        storyId: `US${req.priority === 'high' ? '1' : req.priority === 'medium' ? '2' : '3'}`
+      };
+    });
+    
+    return tasksWithMeta;
   }
 
   topologicalSort(requirements) {
@@ -158,10 +197,14 @@ export class SpecCompiler {
         for (const dep of req.dependencies) {
           visit(dep);
         }
+        temp.delete(id);
+        visited.add(id);
+        result.push(req);
+      } else {
+        // Dependency not found in requirements list - skip but don't break
+        temp.delete(id);
+        logger.warn(`Dependency ${id} not found in requirements - skipping`);
       }
-      temp.delete(id);
-      visited.add(id);
-      result.push(req);
     };
 
     for (const req of requirements) {

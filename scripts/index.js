@@ -11,7 +11,6 @@ import { DevEngine } from './dev_engine.js';
 import { ConfigManager } from './config.js';
 import { logger } from './logger.js';
 import fs from 'fs';
-import path from 'path';
 
 const program = new Command();
 
@@ -26,35 +25,20 @@ program
   .requiredOption('-d, --dir <path>', 'Directory to watch for spec changes')
   .option('-c, --config <path>', 'Path to config file')
   .action(async (options) => {
-    try {
-      const config = await ConfigManager.load(options.config);
-      config.spec_dir = options.dir;
-      
-      logger.info(`Starting spec-driven engine on directory: ${options.dir}`);
-      
-      const watcher = new SpecWatcher(options.dir, config);
-      const compiler = new SpecCompiler(config);
-      const engine = new DevEngine(config);
-      
-      await watcher.start(async (specPath) => {
-        logger.info(`Spec changed: ${specPath}`);
-        try {
-          const plan = await compiler.compile(specPath);
-          logger.info(`Compiled spec with ${plan.requirements.length} requirements`);
-          const success = await engine.execute(plan);
-          if (success) {
-            logger.info(`Development completed successfully for ${specPath}`);
-          } else {
-            logger.warn(`Development completed with issues for ${specPath}`);
-          }
-        } catch (error) {
-          logger.error(`Error processing spec ${specPath}: ${error.message}`);
-        }
-      });
-    } catch (error) {
-      logger.error(`Failed to start engine: ${error.message}`);
-      process.exit(1);
-    }
+    const config = await ConfigManager.load(options.config);
+    config.spec_dir = options.dir;
+    
+    logger.info(`Starting spec-driven engine on directory: ${options.dir}`);
+    
+    const watcher = new SpecWatcher(options.dir, config);
+    const compiler = new SpecCompiler(config);
+    const engine = new DevEngine(config);
+    
+    await watcher.start(async (specPath) => {
+      logger.info(`Spec changed: ${specPath}`);
+      const plan = await compiler.compile(specPath);
+      await engine.execute(plan);
+    });
   });
 
 program
@@ -62,18 +46,42 @@ program
   .description('Stop watching directory')
   .action(async () => {
     logger.info('Stopping spec-driven engine...');
-    // In a real implementation, we'd track the watcher instance
-    // For now, just log
-    console.log('To stop the engine, please terminate the process.');
+    // Implementation would stop the watcher
   });
 
 program
   .command('status')
   .description('Check engine status')
-  .action(async () => {
-    logger.info('Spec-driven engine status:');
-    logger.info('- Check running processes for "spec-driven-engine"');
-    logger.info('- Check logs in ~/.hermes/logs/');
+  .option('-c, --config <path>', 'Path to config file')
+  .action(async (options) => {
+    const config = await ConfigManager.load(options.config);
+    const specDir = config.spec_dir;
+
+    console.log('Spec-Driven Engine Status');
+    console.log('-------------------------');
+    console.log(`Config file: ${ConfigManager.CONFIG_FILE}`);
+    console.log(`Spec directory: ${specDir || '<not set>'}`);
+    console.log(`Project directory: ${config.project_dir || '<auto-detect>'}`);
+
+    if (specDir) {
+      try {
+        const files = await fs.promises.readdir(specDir);
+        const mdFiles = files.filter((f) => f.endsWith('.md'));
+        console.log(`Spec files found: ${mdFiles.length}`);
+        if (mdFiles.length) {
+          mdFiles.slice(0, 10).forEach((f) => console.log(`  - ${f}`));
+          if (mdFiles.length > 10) {
+            console.log(`  ... and ${mdFiles.length - 10} more`);
+          }
+        }
+      } catch (e) {
+        console.log(`Spec directory status: ${e.message}`);
+      }
+    }
+
+    console.log(`Quality gates: ${JSON.stringify(config.quality_gates || {})}`);
+    console.log(`Engine retries: ${config.engine?.maxRetries ?? 3}`);
+    console.log(`Timeout minutes: ${config.engine?.timeoutMinutes ?? 30}`);
   });
 
 program
@@ -82,26 +90,12 @@ program
   .requiredOption('-s, --spec <path>', 'Path to spec file')
   .option('-c, --config <path>', 'Path to config file')
   .action(async (options) => {
-    try {
-      const config = await ConfigManager.load(options.config);
-      const compiler = new SpecCompiler(config);
-      const engine = new DevEngine(config);
-      
-      logger.info(`Running once on spec: ${options.spec}`);
-      const plan = await compiler.compile(options.spec);
-      logger.info(`Compiled spec with ${plan.requirements.length} requirements`);
-      const success = await engine.execute(plan);
-      if (success) {
-        logger.info(`Development completed successfully`);
-        process.exit(0);
-      } else {
-        logger.warn(`Development completed with issues`);
-        process.exit(1);
-      }
-    } catch (error) {
-      logger.error(`Error running spec: ${error.message}`);
-      process.exit(1);
-    }
+    const config = await ConfigManager.load(options.config);
+    const compiler = new SpecCompiler(config);
+    const engine = new DevEngine(config);
+    
+    const plan = await compiler.compile(options.spec);
+    await engine.execute(plan);
   });
 
 program
